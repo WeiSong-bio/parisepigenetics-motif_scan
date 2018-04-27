@@ -1,5 +1,9 @@
 # motif_scan.py
 
+## A forked version of motif_scan for the UMR7216 organisation
+
+We will change and improve the code and usage of the initial motif_scan program.
+
 A Python script for scanning RNA-binding protein motifs in a given set of
 sequences. The PWMs are downloaded from the CISBP website:
 http://cisbp-rna.ccbr.utoronto.ca/.
