@@ -9,14 +9,13 @@
 #
 # April 2018, version UMR7216 Paris Diderot
 # Transformed by Costas Bouyioukos cbouyio@gmail.column
-#
+
 
 import sys
 import time
 import glob
 import os
 import argparse
-#from optparse import OptionParser, OptionGroup
 from collections import defaultdict
 import multiprocessing
 import pandas as pd
@@ -24,46 +23,44 @@ from Bio import motifs, SeqIO
 from Bio.Seq import Seq
 from Bio.Alphabet import IUPAC
 
-#def getoptions():
-  #usage = "usage: python %prog [options] sequences.fa"
 
-# Arrange the command line arguments.
-parser = argparse.ArgumentParser(description = "Scan a fasta sequence files for potential known RnaBP binding sites.")
+# Command line arguments declaration.
+parser = argparse.ArgumentParser(description = "Scan a fasta sequence file for potential known RnaBP binding sites.")
 parser.add_argument("infh", type = argparse.FileType('r'), metavar ="input_file", help =  "A fasta file containing the m(or other)RNA sequences.")
 parser.add_argument("outfh", type = argparse.FileType('w'), metavar = "output_file", default = sys.stdout, help = "A table with the results. (or STDOUT)")
-parser.add_argument('-d', type = str, dest = "pwm_dir", default = os.path.dirname(os.path.abspath(__file__)) + "/db/pwms", help = "Directory containing PWMs.")
-parser.add_argument('-p', '--pseudocount', type = float, dest = "pseudocount", default = 0.5, help = "Pseudocount for normalizing PWM.")
-parser.add_argument('-r', '--rbpinfo', type = str, dest = 'rbpinfo', default = os.path.dirname(os.path.abspath(__file__)) + "/db/RBP_Information_all_motifs.txt", help = "RBP info for adding meta data to results.")
-parser.add_argument('-t', '--type', type = str, dest = 'seqtype', default = "DNA", help = "Alphabet of input sequence (DNA or RNA).")
-parser.add_argument('-m', '--minscore', type = float, dest = 'minscore', default = 6, help = "Minimum score for motif hits.")
+parser.add_argument('-d', type = str, dest = "pwm_dir", default = os.path.dirname(os.path.abspath(__file__)) + "/db/pwms/", help = "Directory containing PWMs. (Default '/db/pwms/')")
+parser.add_argument('-p', '--pseudocount', type = float, dest = "pseudocount", default = 0.5, help = "Pseudocount for normalizing PWM. (Default: 0.25)")
+parser.add_argument('-r', '--rbpinfo', type = str, dest = 'rbpinfo', default = os.path.dirname(os.path.abspath(__file__)) + "/db/RBP_Information_all_motifs.txt", help = "RBP info for adding meta data to results. (Defaulr: '/db/...')")
+parser.add_argument('-t', '--type', type = str, dest = 'seqtype', default = "DNA", help = "Alphabet of input sequence (DNA or RNA). (Default: DNA)")
+parser.add_argument('-m', '--minscore', type = float, dest = 'minscore', default = 6, help = "Minimum score for motif hits. (Default: 6)")
 parser.add_argument('-s', '--seq', type = str, dest = 'testseq', default = None, help = "Supply a test sequence to scan (FASTA files will be ignored).")
-parser.add_argument('-c', type = int, default = 1, dest = "cores", metavar = "CORES", help = "Number of processing cores.")
+parser.add_argument('-c', type = int, default = 1, dest = "cores", metavar = "CORES", help = "Number of processing cores. (Default: 1)")
 parser.add_argument('-x', '--excel', action = "store_true", dest = "excel", default = False, help = "Format the RBP_ID column with HYPERLINK(url) for importing into Excel")
-parser.add_argument('-v', '--version', action="version", version = '%(prog)s version 0.1.27')
+parser.add_argument('-v', '--version', action = "version", version = '%(prog)s version 0.1.99')
 
-optsArgs = parser.parse_args()
 
+## Funcitons
 def load_motifs(db, *args):
+  """Load all motifs from a given directory.
+
+    Will look for all *.txt files and put all motifs in a dictionary of PSSMs.
   """
-  Load all motifs from given directory. Will look for *.txt files
-  """
-  motifs = {}
-  print >> sys.stderr, "Loading motifs ",
   tic = time.time()
+  motifs = {}
+  print >> sys.stderr, "Loading motifs..."
   for file in glob.glob(db + "/*.txt"):
     try:
       id = os.path.splitext(os.path.basename(file))[0]
       motifs[id] = pwm2pssm(file, *args)
     except:
       continue
-    print >> sys.stderr, "\b.", sys.stderr.flush()
+    #print >> sys.stderr, "\b.", sys.stderr.flush() #FIXME I do not know why this returns Noneself.
   toc = time.time()
-  print >> sys.stderr, "done in %0.2f seconds!" % (float(toc - tic))
+  print >> sys.stderr, "done in %0.3f seconds!" % (float(toc - tic))
   return motifs
 
 def pwm2pssm(file, pseudocount):
-  """
-  Convert load PWM and covernt it to PSSM (take the log_odds)
+  """Convert load PWM and covernt it to PSSM (calculate the log_odds).
   """
   pwm = pd.read_table(file)
   # Assuming we are doing RNA motif scanning. Need to replace U with T
@@ -79,9 +76,20 @@ def pwm2pssm(file, pseudocount):
     #pssm[letter] = [-10**6 if x == -float("inf") else x for x in odds]
   return(pssm)
 
-def collect(x, db, excel):
+def scan(pssm, seqrecord, minscore, motif_id):
+  """Scan a sequence for hits of a single RBP.
   """
-  Finilize results into a DataFrame for output
+  results = []
+  for position, score in pssm.search(seqrecord.seq, threshold = minscore, both = False):
+    end_position = position + len(pssm.consensus)
+    geneName = seqrecord.id.split("|")[0]
+    transcriptName = seqrecord.id.split("|")[1]
+    values = [motif_id, geneName, transcriptName, position + 1, end_position, str(seqrecord.seq[position:end_position].transcribe()), round(score, 3)]
+    results.append(values)
+  return results
+
+def collect(x, db, excel):
+  """Finilise results into a DataFrame for output.
   """
   # Get metadata
   columns = ["RBP_ID", "Motif_ID", "DBID", "RBP_Name", "RBP_Status", "Family_Name", "RBDs", "RBP_Species"]
@@ -91,59 +99,53 @@ def collect(x, db, excel):
   if excel:
     meta['RBP_ID'] = "=HYPERLINK(\"http://cisbp-rna.ccbr.utoronto.ca/TFreport.php?searchTF=" + meta['RBP_ID'] + "\")"
   # Create DataFrame from motif hits
-  hits = pd.DataFrame(x, columns = ['Motif_ID', 'Start', 'End', 'Sequence', 'Score'])
+  hits = pd.DataFrame(x, columns = ['Motif_ID', 'Trarget_Gene', 'Target_TR', 'Start', 'End', 'Sequence', 'Score'])
   # Merge metadata with hits
   return pd.merge(meta, hits).sort_values(['Start', 'Motif_ID'])
 
-def scan(pssm, seq, minscore, motif_id):
-  results = []
-  for position, score in pssm.search(seq, threshold = minscore, both = False):
-    end_position = position + len(pssm.consensus)
-    values = [motif_id, position + 1, end_position, str(seq[position:end_position].transcribe()), round(score, 3)]
-    results.append(values)
-  return results
-
-def scan_all(pssms, seq, opts):
-  """
-  Scan seq for all motifs in pssms
+def scan_all(pssms, seqrecord, opts):
+  """Scan a sequence for all PSSM motifs of RBPs.
   """
   hits = []
   tasks = []
   p = multiprocessing.Pool(opts.cores)
   for motif_id, pssm in pssms.iteritems():
-    tasks.append((pssm, seq, opts.minscore, motif_id,))
-    results = [p.apply_async(scan, t) for t in tasks]
+    tasks.append((pssm, seqrecord, opts.minscore, motif_id,))
+  results = [p.apply_async(scan, t) for t in tasks]
   for r in results:
     hits.extend(r.get())
   # Collect results
-  #print >> sys.stderr, "Getting metadata and finalizing... ", final = collect(hits, opts.rbpinfo, opts.excel)
-  #print >> sys.stderr, "done"
+  print >> sys.stderr, "Getting metadata and finalizing... "
+  final = collect(hits, opts.rbpinfo, opts.excel)
+  print >> sys.stderr, "done for seq %s" % (seqrecord.id)
   return final
 
 def main():
-  #(opts, args) = getoptions()
+  # When called as a script instantiate the options-arguments object.
+  optsArgs = parser.parse_args()
   # Load PWMs
   pssms = load_motifs(optsArgs.pwm_dir, optsArgs.pseudocount)
-  if optsArgs.testseq is not None:
+  if optsArgs.testseq is None :
+    tic = time.time()
+    print >> sys.stderr, "Scanning sequences..."
+    print >> optsArgs.outfh, "RBP_ID\tMotif_ID\tDBID\tRBP_Name\tRBP_Status\tFamily_Name\tRBDs\tRBP_Species\tTarget_Gene\tTarget_TR\tStart\tEnd\tSequence\tScore"
+    for seqrecord in SeqIO.parse(optsArgs.infh, "fasta"):
+      seq = seqrecord.seq
+      if optsArgs.seqtype == "RNA":
+        seq = seq.back_transcribe()
+      seq.alphabet = IUPAC.IUPACUnambiguousDNA()
+      final = scan_all(pssms, seqrecord, optsArgs)
+      print final.to_csv(optsArgs.outfh, sep="\t", index = False, header = False)
+    toc = time.time()
+    print >> sys.stderr, "done in %0.2f seconds!" % (float(toc - tic))
+  else:
     if optsArgs.seqtype == 'RNA':
       seq = Seq(opts.testseq, IUPAC.IUPACUnambiguousRNA()).back_transcribe()
       seq.alphabet = IUPAC.IUPACUnambiguousDNA()
     else:
       seq = Seq(opts.testseq, IUPAC.IUPACUnambiguousDNA())
-    final = scan_all(pssms, seq, opts)
-    print final.to_csv(sep="\t", index = False)
-  else:
-    # Scan in sequence
-    #print >> sys.stderr, "Scanning sequences ", tic = time.time()
-    for seqrecord in SeqIO.parse(optsArgs.infh, "fasta"):
-      seq = seqrecord.seq
-      if optsArgs.seqtype == "RNA":
-        seq = seq.back_transcribe()
-        seq.alphabet = IUPAC.IUPACUnambiguousDNA()
-        final = scan_all(pssms, seq, opts)
-        print final.to_csv(sep="\t", index = False)
-    toc = time.time()
-    #print >> sys.stderr, "done in %0.2f seconds!" % (float(toc - tic))
+    final = scan_all(pssms, seq, optsArgs)
+    print final.to_csv(optsArgs.outfh, sep="\t", index = False)
 
 if __name__ == '__main__':
   main()
