@@ -2,10 +2,12 @@
 
 # Jan 29, 2016
 #
-# Calculates motif scores for all PWMs in a given set of sequences in FASTA format
+# Calculate motif scores for all PWMs in a given set of sequences in FASTA format
 #
 # This tool was motivated by the RNA RBP motif scanning tool from CISBP-RNA:
 # http://cisbp-rna.ccbr.utoronto.ca/TFTools.php
+#
+# and branched and heavily modified from the https://github.com/miha-skalic/motif_scan
 #
 # April 2018, version UMR7216 Paris Diderot
 # Transformed by Costas Bouyioukos cbouyio@gmail.column
@@ -16,7 +18,7 @@ import time
 import glob
 import os
 import argparse
-from collections import defaultdict
+#from collections import defaultdict
 import multiprocessing
 import pandas as pd
 from Bio import motifs, SeqIO
@@ -25,18 +27,18 @@ from Bio.Alphabet import IUPAC
 
 
 # Command line arguments declaration.
-parser = argparse.ArgumentParser(description = "Scan a fasta sequence file for potential known RnaBP binding sites.")
-parser.add_argument("infh", type = argparse.FileType('r'), metavar ="input_file", help =  "A fasta file containing the m(or other)RNA sequences.")
+parser = argparse.ArgumentParser(description = "Scan a sequence fasta file to predict binding sites from already known motifs of RnaBPs.")
+parser.add_argument("infh", type = argparse.FileType('r'), metavar ="input_file", help =  "A fasta file containing the m(or_other)RNA sequences.")
 parser.add_argument("outfh", type = argparse.FileType('w'), metavar = "output_file", default = sys.stdout, help = "A table with the results. (or STDOUT)")
-parser.add_argument('-d', type = str, dest = "pwm_dir", default = os.path.dirname(os.path.abspath(__file__)) + "/db/pwms/", help = "Directory containing PWMs. (Default '/db/pwms/')")
-parser.add_argument('-p', '--pseudocount', type = float, dest = "pseudocount", default = 0.5, help = "Pseudocount for normalizing PWM. (Default: 0.25)")
-parser.add_argument('-r', '--rbpinfo', type = str, dest = 'rbpinfo', default = os.path.dirname(os.path.abspath(__file__)) + "/db/RBP_Information_all_motifs.txt", help = "RBP info for adding meta data to results. (Defaulr: '/db/...')")
+parser.add_argument('-d', type = str, dest = "pwm_dir", default = os.path.dirname(os.path.abspath(__file__)) + "/motifs/pwms_all_motifs", help = "Directory containing PWMs. (Default './motifs/pwms_all_motifs')")
+parser.add_argument('-r', '--rbpinfo', type = str, dest = 'rbpinfo', default = os.path.dirname(os.path.abspath(__file__)) + "/motifs/RBP_Information.txt", help = "RBP information file for adding meta data to results. (Defaulr: './motifs/RBP_Information.txt')")
+parser.add_argument('-p', '--pseudocount', type = float, dest = "pseudocount", default = 0.25, help = "Pseudocount for normalizing PWM. (Default: 0.25)")
 parser.add_argument('-t', '--type', type = str, dest = 'seqtype', default = "DNA", help = "Alphabet of input sequence (DNA or RNA). (Default: DNA)")
-parser.add_argument('-m', '--minscore', type = float, dest = 'minscore', default = 6, help = "Minimum score for motif hits. (Default: 6)")
+parser.add_argument('-m', '--minscore', type = float, dest = 'minscore', default = 5, help = "Minimum score for motif hits. (Default: 6)")
 parser.add_argument('-s', '--seq', type = str, dest = 'testseq', default = None, help = "Supply a test sequence to scan (FASTA files will be ignored).")
 parser.add_argument('-c', type = int, default = 1, dest = "cores", metavar = "CORES", help = "Number of processing cores. (Default: 1)")
 parser.add_argument('-x', '--excel', action = "store_true", dest = "excel", default = False, help = "Format the RBP_ID column with HYPERLINK(url) for importing into Excel")
-parser.add_argument('-v', '--version', action = "version", version = '%(prog)s version 0.1.99')
+parser.add_argument('-v', '--version', action = "version", version = '%(prog)s version 0.2.01')
 
 
 ## Funcitons
@@ -54,7 +56,7 @@ def load_motifs(db, *args):
       motifs[id] = pwm2pssm(file, *args)
     except:
       continue
-    #print >> sys.stderr, "\b.", sys.stderr.flush() #FIXME I do not know why this returns Noneself.
+    #print >> sys.stderr, "\b.", sys.stderr.flush() #FIXME I do not know why this returns None.
   toc = time.time()
   print >> sys.stderr, "done in %0.3f seconds!" % (float(toc - tic))
   return motifs
@@ -63,17 +65,17 @@ def pwm2pssm(file, pseudocount):
   """Convert load PWM and covernt it to PSSM (calculate the log_odds).
   """
   pwm = pd.read_table(file)
-  # Assuming we are doing RNA motif scanning. Need to replace U with T
-  # as Biopython's motif scanner only does DNA
+  # Assuming we are doing RNA motif scanning. Need to replace U with T as Biopython's motif scanner only does DNA
   pwm.rename(columns = {'U':'T'}, inplace=True)
   pwm = pwm.drop("Pos", 1).to_dict(orient = 'list')
   pwm = motifs.Motif(alphabet = IUPAC.IUPACUnambiguousDNA(), counts = pwm)
+  #FIXME USE ONLY for human genome.
+  pseudocount = {'A':0.59, 'C': 0.41, 'G': 0.41, 'T': 0.59}
   pwm = pwm.counts.normalize(pseudocount)
   # Can optionally add background, but for now assuming uniform probability
+  #FIXME put he background as a parameter!
+  background = 0.41
   pssm = pwm.log_odds()
-  # Replace negative infinity values with very low number
-  #for letter, odds in pssm.iteritems():
-    #pssm[letter] = [-10**6 if x == -float("inf") else x for x in odds]
   return(pssm)
 
 def scan(pssm, seqrecord, minscore, motif_id):
@@ -101,7 +103,9 @@ def collect(x, db, excel):
   # Create DataFrame from motif hits
   hits = pd.DataFrame(x, columns = ['Motif_ID', 'Trarget_Gene', 'Target_TR', 'Start', 'End', 'Sequence', 'Score'])
   # Merge metadata with hits
-  return pd.merge(meta, hits).sort_values(['Start', 'Motif_ID'])
+  pdm = pd.merge(meta, hits).sort_values(['Start', 'Motif_ID'])
+  #pdms = pdm.to_string(header = False, index = False)
+  return pdm
 
 def scan_all(pssms, seqrecord, opts):
   """Scan a sequence for all PSSM motifs of RBPs.
