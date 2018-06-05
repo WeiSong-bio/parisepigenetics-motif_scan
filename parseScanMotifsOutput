@@ -1,0 +1,39 @@
+#!/usr/bin/env python
+
+# Parse the output of scanRBPmotifs and reports a string of all the RNBP hits for each gene_ID.
+# The output facilitates the heterogeneous clustering.
+#
+# June 2018, UMR7216 Paris Diderot
+# by Costas Bouyioukos cbouyio@gmail.com
+
+import argparse
+import sys
+
+
+parser = argparse.ArgumentParser(description = "Parse scanRBPMotifs")
+parser.add_argument("infh", type = argparse.FileType('r'), metavar ="input_file", help =  "Output table of scanRBPmotifs")
+parser.add_argument("outfh", type = argparse.FileType('w'), metavar = "output_file", default = sys.stdout, help = "A table with <gene_ID> <text> fields")
+
+optsArgs = parser.parse_args()
+
+allLines = optsArgs.infh.readlines()
+
+geneRBP = {}
+
+for i in xrange(len(allLines)):
+  fields = allLines[i].split("\t")
+  gene = str(fields[9])
+  rbp = str(fields[4])
+  if gene in geneRBP:
+    geneRBP[gene].append(rbp)
+  else:
+    geneRBP[gene] = [rbp]
+
+for key, value in geneRBP.items():
+  sortedV = sorted(value, key=str.lower)
+  geneRBP[key] = sortedV
+
+for key, value in geneRBP.items():
+  rbps = "".join(value)
+  string = key + "\t" + rbps
+  print >> optsArgs.outfh, string
