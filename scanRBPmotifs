@@ -41,6 +41,7 @@ parser.add_argument('-v', '--version', action = "version", version = '%(prog)s v
 
 
 ## Funcitons
+# FIXME all the print statement, follow the python3 format.
 def load_motifs(db, *args):
   """Load all motifs from a given directory.
 
@@ -109,6 +110,7 @@ def collect(x, db, excel):
 def scan_all(pssms, seqrecord, opts):
   """Scan a sequence for all PSSM motifs of RBPs.
   """
+  # FIXME resolve the issue with parallelisation of many sequences. "Number of open files". Consult the multiprocessing module for that and monitor the number of open files too.
   hits = []
   tasks = []
   p = multiprocessing.Pool(opts.cores)
